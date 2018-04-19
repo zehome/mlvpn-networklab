@@ -46,6 +46,7 @@ check_dependencies() {
         qemu-system-x86_64 \
         tmux vde_switch \
         start-stop-daemon \
+        rsyslogd \
         $DEPENDENCIES; do
         which $exec 2> /dev/null > /dev/null || log_error_msg "$exec is not installed"
     done
@@ -223,6 +224,16 @@ EOF
 
     log_begin_msg "Check kernel configuration"
     CONFIG="$(dirname $KERNEL)/config-$VERSION"
+    CONFIG_REMOVE=0
+    if [ ! -f "$CONFIG" ]; then
+        if [ -f /proc/config.gz ]; then
+            CONFIG=$(mktemp config.XXXXXXX)
+            gunzip -c /proc/config.gz >$CONFIG
+            CONFIG_REMOVE=1
+        elif [ -f /proc/config ]; then
+            CONFIG=/proc/config
+        fi
+    fi
     [ -f "$CONFIG" ] || log_error_msg "Unable to find configuration file $CONFIG"
     cat <<EOF | while read el; do
 9P_FS=[ym]
@@ -267,6 +278,7 @@ EOF
         log_ok_msg "Modules are in $MODULES"
     fi
     : > $TMP/kernel-checked
+    [ "$CONFIG_REMOVE" = "1" ] && rm "$CONFIG"
 }
 
 setup_initrd () {
@@ -557,7 +569,9 @@ service () {
             for size in 10M 100M 1G 10G 100G; do
                 dd if=/dev/zero of=/tmp/nginx/www/$size bs=1 count=1 seek=$size 2> /dev/null
             done
-            execute nginx -c /mnt/common/nginx.conf
+            nginxconf=/mnt/common/nginx.conf
+            [ -f /mnt/lab/nginx.conf ] && nginxconf=/mnt/lab/nginx.conf
+            execute nginx -c "$nginxconf"
             log_ok_msg "nginx started"
             ;;
         bird)
@@ -815,6 +829,7 @@ EOF
         PROGARGS="$@"
         ROOT="$(readlink -f "${ROOT:-/}")" # Root filesystem
         KERNEL="$(readlink -f "${1:-/boot/vmlinuz-$(uname -r)}")" # Kernel
+        [ ! -f "$KERNEL" ] && KERNEL=$(readlink -f /boot/vmlinuz-linux)  # Archlinux
         PATH="$PATH":/usr/local/sbin:/usr/sbin:/sbin
         [ $# -lt 1 ] || shift
         check_dependencies
